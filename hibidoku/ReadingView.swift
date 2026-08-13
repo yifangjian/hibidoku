@@ -57,43 +57,27 @@ struct ReadingView: View {
                     }
                 }
 
-                // Paged content
+                // Paged content with page curl effect
                 if !pages.isEmpty {
-                    ScrollView(.horizontal) {
-                        LazyHStack(spacing: 0) {
-                            ForEach(Array(pages.enumerated()), id: \.offset) { index, page in
-                                PagedFuriganaView(
-                                    pageData: page,
-                                    backgroundColor: settings.theme.uiBackgroundColor,
-                                    onTokenTapped: { handleTokenTap($0) }
-                                )
-                                .padding(.top, pageInsets.top)
-                                .padding(.bottom, pageInsets.bottom)
-                                .padding(.horizontal, pageInsets.leading)
-                                .frame(width: geometry.size.width, height: geometry.size.height)
-                                .id(index)
+                    PageCurlView(
+                        pages: pages,
+                        currentPage: $currentPage,
+                        backgroundColor: settings.theme.uiBackgroundColor,
+                        contentInsets: UIEdgeInsets(
+                            top: pageInsets.top,
+                            left: pageInsets.leading,
+                            bottom: pageInsets.bottom,
+                            right: pageInsets.trailing
+                        ),
+                        onTokenTapped: { handleTokenTap($0) },
+                        onCenterTapped: {
+                            withAnimation(.easeInOut(duration: 0.25)) {
+                                barsVisible.toggle()
                             }
-                        }
-                        .scrollTargetLayout()
-                    }
-                    .scrollTargetBehavior(.paging)
-                    .scrollPosition(id: Binding(
-                        get: { currentPage as Int? },
-                        set: { if let p = $0 { onPageChanged(p) } }
-                    ))
-                    .scrollIndicators(.hidden)
-                    .simultaneousGesture(
-                        SpatialTapGesture()
-                            .onEnded { value in
-                                let centerStart = geometry.size.width * 0.3
-                                let centerEnd = geometry.size.width * 0.7
-                                if value.location.x > centerStart && value.location.x < centerEnd {
-                                    withAnimation(.easeInOut(duration: 0.25)) {
-                                        barsVisible.toggle()
-                                    }
-                                }
-                            }
+                        },
+                        onPageChanged: { onPageChanged($0) }
                     )
+                    .ignoresSafeArea()
                 }
 
                 // Overlay bars
@@ -372,6 +356,161 @@ struct ReadingView: View {
         let utterance = AVSpeechUtterance(string: book.fullText)
         utterance.voice = AVSpeechSynthesisVoice(language: "ja-JP")
         synthesizer.speak(utterance)
+    }
+}
+
+// MARK: - Page Curl View (UIPageViewController wrapper)
+
+struct PageCurlView: UIViewControllerRepresentable {
+    let pages: [PageData]
+    @Binding var currentPage: Int
+    let backgroundColor: UIColor
+    let contentInsets: UIEdgeInsets
+    var onTokenTapped: ((Int) -> Void)?
+    var onCenterTapped: (() -> Void)?
+    var onPageChanged: ((Int) -> Void)?
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    func makeUIViewController(context: Context) -> UIPageViewController {
+        let pvc = UIPageViewController(
+            transitionStyle: .pageCurl,
+            navigationOrientation: .horizontal,
+            options: [.spineLocation: UIPageViewController.SpineLocation.min.rawValue]
+        )
+        pvc.dataSource = context.coordinator
+        pvc.delegate = context.coordinator
+        pvc.isDoubleSided = false
+        pvc.view.backgroundColor = backgroundColor
+
+        // Center tap gesture for toggling bars
+        let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleCenterTap(_:)))
+        pvc.view.addGestureRecognizer(tap)
+
+        // Set initial page
+        if let initialVC = context.coordinator.viewController(for: currentPage) {
+            pvc.setViewControllers([initialVC], direction: .forward, animated: false)
+        }
+
+        return pvc
+    }
+
+    func updateUIViewController(_ pvc: UIPageViewController, context: Context) {
+        context.coordinator.parent = self
+        pvc.view.backgroundColor = backgroundColor
+
+        // Update current page if it changed programmatically (e.g. full pagination completed)
+        let coord = context.coordinator
+        if let currentVC = pvc.viewControllers?.first as? PageContentViewController,
+           currentVC.pageIndex != currentPage,
+           currentPage < pages.count {
+            let direction: UIPageViewController.NavigationDirection =
+                currentPage > (currentVC.pageIndex) ? .forward : .reverse
+            if let newVC = coord.viewController(for: currentPage) {
+                pvc.setViewControllers([newVC], direction: direction, animated: false)
+            }
+        }
+    }
+
+    // MARK: - Coordinator
+
+    class Coordinator: NSObject, UIPageViewControllerDataSource, UIPageViewControllerDelegate {
+        var parent: PageCurlView
+
+        init(_ parent: PageCurlView) {
+            self.parent = parent
+        }
+
+        func viewController(for index: Int) -> PageContentViewController? {
+            guard index >= 0, index < parent.pages.count else { return nil }
+            let vc = PageContentViewController()
+            vc.pageIndex = index
+            vc.pageData = parent.pages[index]
+            vc.bgColor = parent.backgroundColor
+            vc.contentInsets = parent.contentInsets
+            vc.onTokenTapped = parent.onTokenTapped
+            return vc
+        }
+
+        // MARK: DataSource
+
+        func pageViewController(
+            _ pageViewController: UIPageViewController,
+            viewControllerBefore viewController: UIViewController
+        ) -> UIViewController? {
+            guard let vc = viewController as? PageContentViewController else { return nil }
+            return self.viewController(for: vc.pageIndex - 1)
+        }
+
+        func pageViewController(
+            _ pageViewController: UIPageViewController,
+            viewControllerAfter viewController: UIViewController
+        ) -> UIViewController? {
+            guard let vc = viewController as? PageContentViewController else { return nil }
+            return self.viewController(for: vc.pageIndex + 1)
+        }
+
+        // MARK: Delegate
+
+        func pageViewController(
+            _ pageViewController: UIPageViewController,
+            didFinishAnimating finished: Bool,
+            previousViewControllers: [UIViewController],
+            transitionCompleted completed: Bool
+        ) {
+            guard completed,
+                  let vc = pageViewController.viewControllers?.first as? PageContentViewController else { return }
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            parent.onPageChanged?(vc.pageIndex)
+        }
+
+        // MARK: Center tap
+
+        @objc func handleCenterTap(_ gesture: UITapGestureRecognizer) {
+            let location = gesture.location(in: gesture.view)
+            guard let viewWidth = gesture.view?.bounds.width else { return }
+            let centerStart = viewWidth * 0.3
+            let centerEnd = viewWidth * 0.7
+            if location.x > centerStart && location.x < centerEnd {
+                parent.onCenterTapped?()
+            }
+        }
+    }
+}
+
+// MARK: - Page Content ViewController
+
+class PageContentViewController: UIViewController {
+    var pageIndex: Int = 0
+    var pageData: PageData?
+    var bgColor: UIColor = .white
+    var contentInsets: UIEdgeInsets = .zero
+    var onTokenTapped: ((Int) -> Void)?
+
+    private var rubyView: PagedRubyTextView?
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = bgColor
+
+        let ruby = PagedRubyTextView()
+        ruby.isOpaque = true
+        ruby.backgroundColor = bgColor
+        ruby.pageData = pageData
+        ruby.onTokenTapped = onTokenTapped
+        ruby.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(ruby)
+
+        NSLayoutConstraint.activate([
+            ruby.topAnchor.constraint(equalTo: view.topAnchor, constant: contentInsets.top),
+            ruby.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: contentInsets.left),
+            ruby.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -contentInsets.right),
+            ruby.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -contentInsets.bottom)
+        ])
+
+        self.rubyView = ruby
     }
 }
 

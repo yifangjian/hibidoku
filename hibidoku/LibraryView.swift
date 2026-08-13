@@ -5,6 +5,7 @@ struct LibraryView: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \Book.importedAt, order: .reverse) private var books: [Book]
     @State private var showAddBook = false
+    @State private var showAozoraLibrary = false
 
     var body: some View {
         NavigationStack {
@@ -13,7 +14,7 @@ struct LibraryView: View {
                     ContentUnavailableView(
                         "まだ本がありません",
                         systemImage: "book",
-                        description: Text("右上の＋ボタンで文章を追加しましょう")
+                        description: Text("右上の＋ボタンで文章を追加、\n左上のボタンで青空文庫から作品を選びましょう")
                     )
                 } else {
                     List {
@@ -31,6 +32,13 @@ struct LibraryView: View {
                 ReadingView(book: book)
             }
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        showAozoraLibrary = true
+                    } label: {
+                        Image(systemName: "books.vertical")
+                    }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         showAddBook = true
@@ -41,6 +49,9 @@ struct LibraryView: View {
             }
             .sheet(isPresented: $showAddBook) {
                 AddBookView()
+            }
+            .sheet(isPresented: $showAozoraLibrary) {
+                AozoraLibraryView()
             }
         }
     }
@@ -61,7 +72,21 @@ struct BookRowView: View {
         VStack(alignment: .leading, spacing: 4) {
             Text(book.title)
                 .font(.headline)
+            if let author = book.author, !author.isEmpty {
+                Text(author)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
             HStack {
+                if book.source == .aozora {
+                    Text("青空文庫")
+                        .font(.caption2)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(.blue.opacity(0.1))
+                        .foregroundStyle(.blue)
+                        .clipShape(Capsule())
+                }
                 Text(book.importedAt, style: .date)
                     .font(.caption)
                     .foregroundStyle(.secondary)

@@ -16,5 +16,10 @@ build/
 Scripts/jmdict-eng-common*.json
 Scripts/jmdict-eng-common*.zip
 
+# Temporary Aozora catalog build files
+Scripts/list_person_all_extended_utf8.csv
+Scripts/list_person_all_extended_utf8.zip
+Scripts/aozora_catalog.sqlite
+
 # macOS
 .DS_Store

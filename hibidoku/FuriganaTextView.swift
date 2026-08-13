@@ -15,6 +15,12 @@ nonisolated struct AnnotatedResult: @unchecked Sendable {
     let tokenRanges: [TokenRange]
 }
 
+/// Pre-sliced page data — each page has its own small attributed string.
+nonisolated struct PageData: @unchecked Sendable {
+    let attributedString: NSAttributedString
+    let tokenRanges: [TokenRange]
+}
+
 // MARK: - RubyTextView (CoreText direct drawing + tap detection)
 
 /// Custom UIView that renders text with CTRubyAnnotation using CoreText.
@@ -262,6 +268,46 @@ extension RubyTextView {
 
         return ranges
     }
+
+    /// Slice the full attributed string into per-page PageData for fast rendering.
+    nonisolated static func slicePages(
+        from annotated: AnnotatedResult,
+        pageSize: CGSize
+    ) -> [PageData] {
+        let fullAttr = annotated.attributedString
+        guard fullAttr.length > 0, pageSize.width > 0, pageSize.height > 0 else {
+            return []
+        }
+
+        let ranges = calculatePageRanges(for: fullAttr, pageSize: pageSize)
+        let allTokenRanges = annotated.tokenRanges
+
+        return ranges.map { cfRange in
+            let loc = cfRange.location
+            let len = cfRange.length
+            let nsRange = NSRange(location: loc, length: len)
+            let pageAttr = fullAttr.attributedSubstring(from: nsRange)
+
+            // Remap token ranges to be relative to this page's substring
+            let pageTokenRanges = allTokenRanges.compactMap { tr -> TokenRange? in
+                let trEnd = tr.start + tr.length
+                let pageEnd = loc + len
+                // Token overlaps with this page
+                guard trEnd > loc && tr.start < pageEnd else { return nil }
+                let clippedStart = max(tr.start, loc)
+                let clippedEnd = min(trEnd, pageEnd)
+                let clippedLen = clippedEnd - clippedStart
+                guard clippedLen > 0 else { return nil }
+                return TokenRange(
+                    start: clippedStart - loc,
+                    length: clippedLen,
+                    tokenIndex: tr.tokenIndex
+                )
+            }
+
+            return PageData(attributedString: pageAttr, tokenRanges: pageTokenRanges)
+        }
+    }
 }
 
 // MARK: - Paged Ruby View (single page rendering)
@@ -270,9 +316,7 @@ extension RubyTextView {
 /// Used for paginated reading where each page shows a portion of the text.
 class PagedRubyTextView: UIView {
 
-    var attributedText: NSAttributedString?
-    var characterRange: CFRange = CFRangeMake(0, 0)
-    var tokenRanges: [TokenRange] = []
+    var pageData: PageData?
     var onTokenTapped: ((Int) -> Void)?
 
     private var ctFrame: CTFrame?
@@ -287,17 +331,17 @@ class PagedRubyTextView: UIView {
     required init?(coder: NSCoder) { fatalError() }
 
     override func draw(_ rect: CGRect) {
-        guard let attributedText,
+        guard let pageData,
               let context = UIGraphicsGetCurrentContext() else { return }
 
         context.textMatrix = .identity
         context.translateBy(x: 0, y: bounds.height)
         context.scaleBy(x: 1.0, y: -1.0)
 
-        let framesetter = CTFramesetterCreateWithAttributedString(attributedText as CFAttributedString)
+        let framesetter = CTFramesetterCreateWithAttributedString(pageData.attributedString as CFAttributedString)
         let path = CGMutablePath()
         path.addRect(bounds)
-        let frame = CTFramesetterCreateFrame(framesetter, characterRange, path, nil)
+        let frame = CTFramesetterCreateFrame(framesetter, CFRangeMake(0, 0), path, nil)
         self.ctFrame = frame
         CTFrameDraw(frame, context)
     }
@@ -327,8 +371,8 @@ class PagedRubyTextView: UIView {
                 let relativePoint = CGPoint(x: ctPoint.x - origin.x, y: ctPoint.y - origin.y)
                 let charIndex = CTLineGetStringIndexForPosition(line, relativePoint)
 
-                if charIndex != kCFNotFound {
-                    for tokenRange in tokenRanges {
+                if charIndex != kCFNotFound, let pageData {
+                    for tokenRange in pageData.tokenRanges {
                         if charIndex >= tokenRange.start && charIndex < tokenRange.start + tokenRange.length {
                             onTokenTapped?(tokenRange.tokenIndex)
                             return
@@ -344,10 +388,8 @@ class PagedRubyTextView: UIView {
 // MARK: - Paged Furigana SwiftUI Wrapper
 
 struct PagedFuriganaView: UIViewRepresentable {
-    let attributedText: NSAttributedString?
-    let characterRange: CFRange
+    let pageData: PageData
     let backgroundColor: UIColor
-    var tokenRanges: [TokenRange] = []
     var onTokenTapped: ((Int) -> Void)?
 
     func makeUIView(context: Context) -> PagedRubyTextView {
@@ -358,9 +400,7 @@ struct PagedFuriganaView: UIViewRepresentable {
 
     func updateUIView(_ uiView: PagedRubyTextView, context: Context) {
         uiView.backgroundColor = backgroundColor
-        uiView.attributedText = attributedText
-        uiView.characterRange = characterRange
-        uiView.tokenRanges = tokenRanges
+        uiView.pageData = pageData
         uiView.onTokenTapped = onTokenTapped
         uiView.setNeedsDisplay()
     }

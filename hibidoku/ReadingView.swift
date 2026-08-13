@@ -10,12 +10,10 @@ struct ReadingView: View {
     @State private var settings = ReaderSettingsModel()
 
     // Text data
-    @State private var annotatedText: NSAttributedString?
     @State private var currentTokens: [FuriganaToken] = []
-    @State private var currentTokenRanges: [TokenRange] = []
 
     // Pagination
-    @State private var pageRanges: [CFRange] = []
+    @State private var pages: [PageData] = []
     @State private var currentPage: Int = 0
     @State private var pageSize: CGSize = .zero
     @State private var isFullyPaginated = false
@@ -60,15 +58,13 @@ struct ReadingView: View {
                 }
 
                 // Paged content
-                if !pageRanges.isEmpty {
+                if !pages.isEmpty {
                     ScrollView(.horizontal) {
                         LazyHStack(spacing: 0) {
-                            ForEach(Array(pageRanges.enumerated()), id: \.offset) { index, range in
+                            ForEach(Array(pages.enumerated()), id: \.offset) { index, page in
                                 PagedFuriganaView(
-                                    attributedText: annotatedText,
-                                    characterRange: range,
+                                    pageData: page,
                                     backgroundColor: settings.theme.uiBackgroundColor,
-                                    tokenRanges: currentTokenRanges,
                                     onTokenTapped: { handleTokenTap($0) }
                                 )
                                 .padding(.top, pageInsets.top)
@@ -209,7 +205,7 @@ struct ReadingView: View {
     private var bottomBar: some View {
         HStack {
             HStack(spacing: 4) {
-                Text("\(currentPage + 1) / \(max(pageRanges.count, 1))")
+                Text("\(currentPage + 1) / \(max(pages.count, 1))")
                     .font(.caption.monospacedDigit())
                 if !isFullyPaginated {
                     ProgressView()
@@ -282,18 +278,15 @@ struct ReadingView: View {
                 lineHeightMultiple: lineHeight,
                 textColor: textColor
             )
-            let initialAttr = initialResult.attributedString
-            let initialRanges = RubyTextView.calculatePageRanges(for: initialAttr, pageSize: size)
-            let firstRanges = initialRanges.isEmpty
-                ? [CFRangeMake(0, initialAttr.length)]
-                : initialRanges
+            let initialPages = RubyTextView.slicePages(from: initialResult, pageSize: size)
+            let firstPages = initialPages.isEmpty
+                ? [PageData(attributedString: initialResult.attributedString, tokenRanges: initialResult.tokenRanges)]
+                : initialPages
 
             await MainActor.run {
                 guard paginationId == runId else { return }
                 currentTokens = initialTokens
-                currentTokenRanges = initialResult.tokenRanges
-                annotatedText = initialAttr
-                pageRanges = firstRanges
+                pages = firstPages
                 currentPage = 0
                 isLoading = false
             }
@@ -304,8 +297,8 @@ struct ReadingView: View {
                     guard paginationId == runId else { return }
                     isFullyPaginated = true
                     let targetPage = min(
-                        Int(Double(max(firstRanges.count - 1, 0)) * progress),
-                        max(firstRanges.count - 1, 0)
+                        Int(Double(max(firstPages.count - 1, 0)) * progress),
+                        max(firstPages.count - 1, 0)
                     )
                     currentPage = targetPage
                 }
@@ -319,22 +312,19 @@ struct ReadingView: View {
                 lineHeightMultiple: lineHeight,
                 textColor: textColor
             )
-            let fullAttr = fullResult.attributedString
-            let fullRanges = RubyTextView.calculatePageRanges(for: fullAttr, pageSize: size)
-            let finalRanges = fullRanges.isEmpty
-                ? [CFRangeMake(0, fullAttr.length)]
-                : fullRanges
+            let fullPages = RubyTextView.slicePages(from: fullResult, pageSize: size)
+            let finalPages = fullPages.isEmpty
+                ? [PageData(attributedString: fullResult.attributedString, tokenRanges: fullResult.tokenRanges)]
+                : fullPages
             let targetPage = min(
-                Int(Double(max(finalRanges.count - 1, 0)) * progress),
-                max(finalRanges.count - 1, 0)
+                Int(Double(max(finalPages.count - 1, 0)) * progress),
+                max(finalPages.count - 1, 0)
             )
 
             await MainActor.run {
                 guard paginationId == runId else { return }
                 currentTokens = fullTokens
-                currentTokenRanges = fullResult.tokenRanges
-                annotatedText = fullAttr
-                pageRanges = finalRanges
+                pages = finalPages
                 currentPage = targetPage
                 isFullyPaginated = true
             }
@@ -354,11 +344,11 @@ struct ReadingView: View {
     }
 
     private func updateProgressFromPage(_ page: Int) {
-        guard pageRanges.count > 1 else {
+        guard pages.count > 1 else {
             book.readingProgress = 1.0
             return
         }
-        book.readingProgress = Double(page) / Double(pageRanges.count - 1)
+        book.readingProgress = Double(page) / Double(pages.count - 1)
     }
 
     // MARK: - Dictionary Lookup

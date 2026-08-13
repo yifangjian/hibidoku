@@ -72,21 +72,19 @@ struct ReadingView: View {
                         set: { if let p = $0 { onPageChanged(p) } }
                     ))
                     .scrollIndicators(.hidden)
-                }
-
-                // Tap zone for toggling bars
-                Color.clear
-                    .contentShape(Rectangle())
-                    .onTapGesture { location in
-                        let centerStart = geometry.size.width * 0.3
-                        let centerEnd = geometry.size.width * 0.7
-                        if location.x > centerStart && location.x < centerEnd {
-                            withAnimation(.easeInOut(duration: 0.25)) {
-                                barsVisible.toggle()
+                    .simultaneousGesture(
+                        SpatialTapGesture()
+                            .onEnded { value in
+                                let centerStart = geometry.size.width * 0.3
+                                let centerEnd = geometry.size.width * 0.7
+                                if value.location.x > centerStart && value.location.x < centerEnd {
+                                    withAnimation(.easeInOut(duration: 0.25)) {
+                                        barsVisible.toggle()
+                                    }
+                                }
                             }
-                        }
-                    }
-                    .allowsHitTesting(!showWordDetail && !showSettings)
+                    )
+                }
 
                 // Overlay bars
                 VStack(spacing: 0) {

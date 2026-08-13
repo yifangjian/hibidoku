@@ -4,13 +4,13 @@ import SwiftUI
 
 // MARK: - Token Range Mapping
 
-struct TokenRange {
+nonisolated struct TokenRange: Sendable {
     let start: Int
     let length: Int
     let tokenIndex: Int
 }
 
-struct AnnotatedResult {
+nonisolated struct AnnotatedResult: @unchecked Sendable {
     let attributedString: NSAttributedString
     let tokenRanges: [TokenRange]
 }
@@ -148,7 +148,7 @@ class RubyTextView: UIView {
 
     // MARK: - Build Attributed String with Ruby Annotations and Range Mapping
 
-    static func buildAnnotatedResult(
+    nonisolated static func buildAnnotatedResult(
         from tokens: [FuriganaToken],
         fontSize: CGFloat = 22,
         lineHeightMultiple: CGFloat = 1.8,
@@ -232,7 +232,7 @@ extension RubyTextView {
 
     /// Calculate page ranges for paginated display.
     /// Each CFRange represents the character range that fits in one page.
-    static func calculatePageRanges(
+    nonisolated static func calculatePageRanges(
         for attributedString: NSAttributedString,
         pageSize: CGSize
     ) -> [CFRange] {

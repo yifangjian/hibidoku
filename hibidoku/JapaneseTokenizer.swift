@@ -1,11 +1,11 @@
 import Foundation
 
-struct FuriganaToken {
+nonisolated struct FuriganaToken: Sendable {
     let surface: String
     let reading: String?
 }
 
-enum JapaneseTokenizer {
+nonisolated enum JapaneseTokenizer {
 
     static func tokenize(_ text: String) -> [FuriganaToken] {
         guard !text.isEmpty else { return [] }

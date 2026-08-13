@@ -1,17 +1,12 @@
-//
-//  hibidokuApp.swift
-//  hibidoku
-//
-//  Created by Jian on 2026/8/13.
-//
-
 import SwiftUI
+import SwiftData
 
 @main
 struct hibidokuApp: App {
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            LibraryView()
         }
+        .modelContainer(for: Book.self)
     }
 }

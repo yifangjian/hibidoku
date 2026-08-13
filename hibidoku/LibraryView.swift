@@ -7,6 +7,8 @@ struct LibraryView: View {
     @State private var showAddBook = false
     @State private var showAozoraLibrary = false
     @State private var bookToDelete: Book?
+    @State private var isPreloading = false
+    @State private var preloadFailed = false
 
     private let columns = [
         GridItem(.flexible(), spacing: 16),
@@ -52,6 +54,7 @@ struct LibraryView: View {
             .sheet(isPresented: $showAozoraLibrary) {
                 AozoraLibraryView()
             }
+            .task { await preloadSampleBookIfNeeded() }
             .alert("この本を削除しますか？", isPresented: .init(
                 get: { bookToDelete != nil },
                 set: { if !$0 { bookToDelete = nil } }
@@ -76,42 +79,64 @@ struct LibraryView: View {
 
     private var emptyStateView: some View {
         VStack(spacing: 24) {
-            Image(systemName: "books.vertical.circle")
-                .font(.system(size: 72))
-                .foregroundStyle(.indigo.opacity(0.5))
-            VStack(spacing: 8) {
-                Text("まだ本がありません")
-                    .font(.title3)
-                    .fontWeight(.semibold)
-                Text("青空文庫から作品を選ぶか、\n自分の文章を追加しましょう")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-            }
-            HStack(spacing: 16) {
-                Button {
-                    hapticLight()
-                    showAozoraLibrary = true
-                } label: {
-                    Label("青空文庫", systemImage: "books.vertical.fill")
-                        .font(.subheadline.weight(.semibold))
-                        .padding(.horizontal, 20)
-                        .padding(.vertical, 12)
-                        .background(.indigo)
-                        .foregroundStyle(.white)
-                        .clipShape(Capsule())
+            if isPreloading {
+                // Downloading sample book
+                VStack(spacing: 20) {
+                    ProgressView()
+                        .scaleEffect(1.5)
+                    VStack(spacing: 6) {
+                        Text("サンプル書籍をダウンロード中…")
+                            .font(.title3)
+                            .fontWeight(.semibold)
+                        Text("夏目漱石「吾輩は猫である」")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
                 }
-                Button {
-                    hapticLight()
-                    showAddBook = true
-                } label: {
-                    Label("テキスト追加", systemImage: "plus")
-                        .font(.subheadline.weight(.semibold))
-                        .padding(.horizontal, 20)
-                        .padding(.vertical, 12)
-                        .background(.orange)
-                        .foregroundStyle(.white)
-                        .clipShape(Capsule())
+                .padding()
+            } else {
+                Image(systemName: "books.vertical.circle")
+                    .font(.system(size: 72))
+                    .foregroundStyle(.indigo.opacity(0.5))
+                VStack(spacing: 8) {
+                    Text("まだ本がありません")
+                        .font(.title3)
+                        .fontWeight(.semibold)
+                    Text("青空文庫から作品を選ぶか、\n自分の文章を追加しましょう")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                if preloadFailed {
+                    Text("サンプルのダウンロードに失敗しました")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+                HStack(spacing: 16) {
+                    Button {
+                        hapticLight()
+                        showAozoraLibrary = true
+                    } label: {
+                        Label("青空文庫", systemImage: "books.vertical.fill")
+                            .font(.subheadline.weight(.semibold))
+                            .padding(.horizontal, 20)
+                            .padding(.vertical, 12)
+                            .background(.indigo)
+                            .foregroundStyle(.white)
+                            .clipShape(Capsule())
+                    }
+                    Button {
+                        hapticLight()
+                        showAddBook = true
+                    } label: {
+                        Label("テキスト追加", systemImage: "plus")
+                            .font(.subheadline.weight(.semibold))
+                            .padding(.horizontal, 20)
+                            .padding(.vertical, 12)
+                            .background(.orange)
+                            .foregroundStyle(.white)
+                            .clipShape(Capsule())
+                    }
                 }
             }
         }
@@ -145,6 +170,44 @@ struct LibraryView: View {
 
     private func hapticMedium() {
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+    }
+
+    // MARK: - Preload Sample Book
+
+    private func preloadSampleBookIfNeeded() async {
+        guard !UserDefaults.standard.bool(forKey: "didPreloadSample") else { return }
+
+        let count = (try? modelContext.fetchCount(FetchDescriptor<Book>())) ?? 0
+        guard count == 0 else {
+            UserDefaults.standard.set(true, forKey: "didPreloadSample")
+            return
+        }
+
+        withAnimation { isPreloading = true }
+
+        let work = AozoraService.Work(
+            id: 789,
+            title: "吾輩は猫である",
+            titleReading: "わがはいはねこである",
+            authorId: 148,
+            authorName: "夏目漱石",
+            orthography: "新字新仮名",
+            textURL: "https://www.aozora.gr.jp/cards/000148/files/789_ruby_5639.zip",
+            textEncoding: "ShiftJIS"
+        )
+
+        do {
+            let text = try await AozoraService.shared.downloadText(for: work)
+            let book = Book(title: work.title, fullText: text, source: .aozora, author: work.authorName)
+            modelContext.insert(book)
+            try modelContext.save()
+            UserDefaults.standard.set(true, forKey: "didPreloadSample")
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+        } catch {
+            withAnimation { preloadFailed = true }
+        }
+
+        withAnimation { isPreloading = false }
     }
 }
 

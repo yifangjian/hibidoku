@@ -18,6 +18,8 @@ struct ReadingView: View {
     @State private var pageRanges: [CFRange] = []
     @State private var currentPage: Int = 0
     @State private var pageSize: CGSize = .zero
+    @State private var isFullyPaginated = false
+    @State private var paginationId = UUID()
 
     // UI state
     @State private var barsVisible = true
@@ -206,9 +208,15 @@ struct ReadingView: View {
 
     private var bottomBar: some View {
         HStack {
-            Text("\(currentPage + 1) / \(max(pageRanges.count, 1))")
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(settings.theme.textColor.opacity(0.7))
+            HStack(spacing: 4) {
+                Text("\(currentPage + 1) / \(max(pageRanges.count, 1))")
+                    .font(.caption.monospacedDigit())
+                if !isFullyPaginated {
+                    ProgressView()
+                        .scaleEffect(0.6)
+                }
+            }
+            .foregroundStyle(settings.theme.textColor.opacity(0.7))
 
             Spacer()
 
@@ -244,8 +252,15 @@ struct ReadingView: View {
 
     // MARK: - Pagination
 
+    /// Initial chunk size for fast first-page display.
+    private static let initialChunkSize = 3000
+
     private func annotateAndPaginate() {
         isLoading = true
+        isFullyPaginated = false
+        let runId = UUID()
+        paginationId = runId
+
         let text = book.fullText
         let fontSize = settings.fontSize.basePoints
         let lineHeight = settings.fontSize.lineHeightMultiple
@@ -253,83 +268,82 @@ struct ReadingView: View {
         let size = pageSize
         let progress = book.readingProgress
 
+        // Phase 1: Process a small initial chunk for instant display
+        let chunkEnd = min(Self.initialChunkSize, text.count)
+        let initialText = chunkEnd < text.count
+            ? String(text.prefix(chunkEnd))
+            : text
+
         Task.detached(priority: .userInitiated) {
-            let tokens = JapaneseTokenizer.tokenize(text)
-            let result = RubyTextView.buildAnnotatedResult(
-                from: tokens,
+            let initialTokens = JapaneseTokenizer.tokenize(initialText)
+            let initialResult = RubyTextView.buildAnnotatedResult(
+                from: initialTokens,
                 fontSize: fontSize,
                 lineHeightMultiple: lineHeight,
                 textColor: textColor
             )
-            let attrStr = result.attributedString
-            let tokenRanges = result.tokenRanges
-            let ranges = RubyTextView.calculatePageRanges(for: attrStr, pageSize: size)
-            let finalRanges = ranges.isEmpty ? [CFRangeMake(0, attrStr.length)] : ranges
+            let initialAttr = initialResult.attributedString
+            let initialRanges = RubyTextView.calculatePageRanges(for: initialAttr, pageSize: size)
+            let firstRanges = initialRanges.isEmpty
+                ? [CFRangeMake(0, initialAttr.length)]
+                : initialRanges
+
+            await MainActor.run {
+                guard paginationId == runId else { return }
+                currentTokens = initialTokens
+                currentTokenRanges = initialResult.tokenRanges
+                annotatedText = initialAttr
+                pageRanges = firstRanges
+                currentPage = 0
+                isLoading = false
+            }
+
+            // Phase 2: Process the full text in background
+            guard chunkEnd < text.count else {
+                await MainActor.run {
+                    guard paginationId == runId else { return }
+                    isFullyPaginated = true
+                    let targetPage = min(
+                        Int(Double(max(firstRanges.count - 1, 0)) * progress),
+                        max(firstRanges.count - 1, 0)
+                    )
+                    currentPage = targetPage
+                }
+                return
+            }
+
+            let fullTokens = JapaneseTokenizer.tokenize(text)
+            let fullResult = RubyTextView.buildAnnotatedResult(
+                from: fullTokens,
+                fontSize: fontSize,
+                lineHeightMultiple: lineHeight,
+                textColor: textColor
+            )
+            let fullAttr = fullResult.attributedString
+            let fullRanges = RubyTextView.calculatePageRanges(for: fullAttr, pageSize: size)
+            let finalRanges = fullRanges.isEmpty
+                ? [CFRangeMake(0, fullAttr.length)]
+                : fullRanges
             let targetPage = min(
                 Int(Double(max(finalRanges.count - 1, 0)) * progress),
                 max(finalRanges.count - 1, 0)
             )
 
             await MainActor.run {
-                currentTokens = tokens
-                currentTokenRanges = tokenRanges
-                annotatedText = attrStr
+                guard paginationId == runId else { return }
+                currentTokens = fullTokens
+                currentTokenRanges = fullResult.tokenRanges
+                annotatedText = fullAttr
                 pageRanges = finalRanges
                 currentPage = targetPage
-                isLoading = false
+                isFullyPaginated = true
             }
         }
     }
 
     private func rePaginate() {
-        guard !currentTokens.isEmpty else { return }
-        isLoading = true
-        let tokens = currentTokens
-        let fontSize = settings.fontSize.basePoints
-        let lineHeight = settings.fontSize.lineHeightMultiple
-        let textColor = settings.theme.uiTextColor
-        let size = pageSize
-        let oldProgress = book.readingProgress
-
-        Task.detached(priority: .userInitiated) {
-            let result = RubyTextView.buildAnnotatedResult(
-                from: tokens,
-                fontSize: fontSize,
-                lineHeightMultiple: lineHeight,
-                textColor: textColor
-            )
-            let attrStr = result.attributedString
-            let ranges = RubyTextView.calculatePageRanges(for: attrStr, pageSize: size)
-            let finalRanges = ranges.isEmpty ? [CFRangeMake(0, attrStr.length)] : ranges
-            let targetPage = min(
-                Int(Double(max(finalRanges.count - 1, 0)) * oldProgress),
-                max(finalRanges.count - 1, 0)
-            )
-
-            await MainActor.run {
-                annotatedText = attrStr
-                pageRanges = finalRanges
-                currentPage = targetPage
-                isLoading = false
-            }
-        }
-    }
-
-    private func paginate() {
-        guard let text = annotatedText, pageSize.width > 0, pageSize.height > 0 else {
-            pageRanges = []
-            return
-        }
-        pageRanges = RubyTextView.calculatePageRanges(for: text, pageSize: pageSize)
-        if pageRanges.isEmpty {
-            pageRanges = [CFRangeMake(0, text.length)]
-        }
-    }
-
-    private func restorePageFromProgress() {
-        guard !pageRanges.isEmpty else { return }
-        let targetPage = Int(Double(pageRanges.count - 1) * book.readingProgress)
-        currentPage = min(targetPage, pageRanges.count - 1)
+        guard !book.fullText.isEmpty else { return }
+        annotateAndPaginate()
     }
 
     private func onPageChanged(_ page: Int) {

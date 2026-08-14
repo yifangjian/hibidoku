@@ -26,7 +26,7 @@ struct ReadingView: View {
 
     // Dictionary lookup
     @State private var selectedToken: FuriganaToken?
-    @State private var dictEntries: [DictEntry] = []
+    @State private var lookupResult: LookupResult = LookupResult(entries: [], matchedForm: nil)
     @State private var showWordDetail = false
 
     // TTS
@@ -124,8 +124,8 @@ struct ReadingView: View {
         .statusBarHidden(!barsVisible)
         .sheet(isPresented: $showWordDetail) {
             if let token = selectedToken {
-                WordDetailView(token: token, entries: dictEntries)
-                    .presentationDetents([.medium])
+                WordDetailView(token: token, lookupResult: lookupResult, bookTitle: book.title)
+                    .presentationDetents([.medium, .large])
             }
         }
         .sheet(isPresented: $showSettings) {
@@ -345,7 +345,7 @@ struct ReadingView: View {
 
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         selectedToken = token
-        dictEntries = DictionaryService.shared.lookup(surface)
+        lookupResult = DictionaryService.shared.smartLookup(surface)
         showWordDetail = true
     }
 

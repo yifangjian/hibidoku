@@ -13,8 +13,8 @@ DerivedData/
 build/
 
 # Temporary dictionary build files
-Scripts/jmdict-eng-common*.json
-Scripts/jmdict-eng-common*.zip
+Scripts/jmdict-eng*.json
+Scripts/jmdict-eng*.zip
 
 # Temporary Aozora catalog build files
 Scripts/list_person_all_extended_utf8.csv

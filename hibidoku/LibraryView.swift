@@ -30,12 +30,20 @@ struct LibraryView: View {
             }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button {
-                        hapticLight()
-                        showAozoraLibrary = true
-                    } label: {
-                        Image(systemName: "books.vertical.fill")
-                            .foregroundStyle(.indigo)
+                    HStack(spacing: 12) {
+                        Button {
+                            hapticLight()
+                            showAozoraLibrary = true
+                        } label: {
+                            Image(systemName: "books.vertical.fill")
+                                .foregroundStyle(.indigo)
+                        }
+                        NavigationLink {
+                            VocabularyListView()
+                        } label: {
+                            Image(systemName: "bookmark.fill")
+                                .foregroundStyle(.orange)
+                        }
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
